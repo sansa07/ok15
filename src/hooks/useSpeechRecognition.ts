@@ -38,7 +38,7 @@ export const useSpeechRecognition = () => {
   const onSpeechEndRef = useRef<((text: string) => void) | null>(null);
   const finalTranscriptRef = useRef('');
   const isVoiceModeRef = useRef(false);
-  const shouldRestartRef = useRef(false);
+  const timeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -48,28 +48,37 @@ export const useSpeechRecognition = () => {
     }
   }, []);
 
+  const cleanup = useCallback(() => {
+    if (timeoutRef.current) {
+      clearTimeout(timeoutRef.current);
+      timeoutRef.current = null;
+    }
+    if (recognitionRef.current) {
+      recognitionRef.current.abort();
+      recognitionRef.current = null;
+    }
+    setIsListening(false);
+  }, []);
+
   const startListening = useCallback((onSpeechEnd?: (text: string) => void) => {
     if (!isSupported) return;
 
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     if (!SpeechRecognition) return;
 
-    // Stop any existing recognition
-    if (recognitionRef.current) {
-      recognitionRef.current.abort();
-    }
+    // Cleanup any existing recognition
+    cleanup();
 
     console.log('🎤 Starting speech recognition', onSpeechEnd ? '(Voice Mode)' : '(Manual Mode)');
     
-    // Set voice mode flag
+    // Set mode flags
     isVoiceModeRef.current = !!onSpeechEnd;
-    shouldRestartRef.current = !!onSpeechEnd;
-    
+    onSpeechEndRef.current = onSpeechEnd || null;
+    finalTranscriptRef.current = '';
+
     // Create new recognition instance
     const recognition = new SpeechRecognition();
     recognitionRef.current = recognition;
-    onSpeechEndRef.current = onSpeechEnd || null;
-    finalTranscriptRef.current = '';
 
     // Settings
     recognition.continuous = true;
@@ -103,17 +112,17 @@ export const useSpeechRecognition = () => {
       console.log('📝 Transcript updated:', currentTranscript);
       setTranscript(currentTranscript);
 
-      // If we have final result and callback (voice mode)
-      if (finalTranscript && onSpeechEndRef.current) {
+      // For voice mode, process final results immediately
+      if (finalTranscript && isVoiceModeRef.current && onSpeechEndRef.current) {
         console.log('🎯 Final result for voice mode:', finalTranscriptRef.current);
         const fullText = finalTranscriptRef.current.trim();
         if (fullText) {
-          // Stop current recognition
           recognition.stop();
-          // Trigger callback with the text
+          // Process the speech immediately
+          const callback = onSpeechEndRef.current;
           setTimeout(() => {
-            if (onSpeechEndRef.current) {
-              onSpeechEndRef.current(fullText);
+            if (callback) {
+              callback(fullText);
             }
           }, 100);
         }
@@ -123,31 +132,19 @@ export const useSpeechRecognition = () => {
     recognition.onend = () => {
       console.log('🛑 Speech recognition ended');
       setIsListening(false);
+      recognitionRef.current = null;
       
       // For manual mode, keep the transcript
       if (!isVoiceModeRef.current && finalTranscriptRef.current) {
         console.log('💾 Keeping transcript for manual input:', finalTranscriptRef.current);
         setTranscript(finalTranscriptRef.current);
       }
-      
-      // Clear the recognition reference
-      recognitionRef.current = null;
     };
 
     recognition.onerror = (event: SpeechRecognitionErrorEvent) => {
       console.error('❌ Speech recognition error:', event.error);
       setIsListening(false);
       recognitionRef.current = null;
-      
-      // If it's a voice mode error and we should restart, try again
-      if (isVoiceModeRef.current && shouldRestartRef.current && event.error !== 'aborted') {
-        console.log('🔄 Restarting after error in voice mode');
-        setTimeout(() => {
-          if (shouldRestartRef.current && onSpeechEndRef.current) {
-            startListening(onSpeechEndRef.current);
-          }
-        }, 1000);
-      }
     };
 
     try {
@@ -157,17 +154,14 @@ export const useSpeechRecognition = () => {
       setIsListening(false);
       recognitionRef.current = null;
     }
-  }, [isSupported]);
+  }, [isSupported, cleanup]);
 
   const stopListening = useCallback(() => {
     console.log('⏹️ Stopping speech recognition');
-    shouldRestartRef.current = false;
     isVoiceModeRef.current = false;
-    
-    if (recognitionRef.current && isListening) {
-      recognitionRef.current.stop();
-    }
-  }, [isListening]);
+    onSpeechEndRef.current = null;
+    cleanup();
+  }, [cleanup]);
 
   const resetTranscript = useCallback(() => {
     console.log('🔄 Resetting transcript');
@@ -177,14 +171,19 @@ export const useSpeechRecognition = () => {
 
   // Function specifically for voice mode to restart listening
   const restartListening = useCallback((onSpeechEnd: (text: string) => void) => {
-    if (!shouldRestartRef.current) return;
-    
     console.log('🔄 Restarting listening for voice mode');
-    setTimeout(() => {
-      if (shouldRestartRef.current) {
+    
+    // Clear any existing timeout
+    if (timeoutRef.current) {
+      clearTimeout(timeoutRef.current);
+    }
+    
+    // Set a timeout to restart listening
+    timeoutRef.current = setTimeout(() => {
+      if (isVoiceModeRef.current) {
         startListening(onSpeechEnd);
       }
-    }, 500);
+    }, 1000);
   }, [startListening]);
 
   return {

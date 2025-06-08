@@ -17,6 +17,7 @@ function App() {
   const [isVoiceMode, setIsVoiceMode] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const voiceModeRef = useRef(false);
 
   // Speech hooks
   const {
@@ -44,12 +45,17 @@ function App() {
     scrollToBottom();
   }, [messages]);
 
+  // Update voice mode ref when state changes
+  useEffect(() => {
+    voiceModeRef.current = isVoiceMode;
+  }, [isVoiceMode]);
+
   // Manual microphone: write transcript to input when listening stops
   useEffect(() => {
     if (transcript && !isVoiceMode && !isListening) {
       console.log('📝 Setting input from transcript:', transcript);
-      setInput(transcript);
-      resetTranscript(); // Clear transcript after using it
+      setInput(prev => prev + transcript);
+      resetTranscript();
     }
   }, [transcript, isVoiceMode, isListening, resetTranscript]);
 
@@ -59,7 +65,9 @@ function App() {
     
     if (!spokenText.trim()) {
       console.log('⚠️ Empty speech, restarting listening');
-      restartListening(handleVoiceConversation);
+      if (voiceModeRef.current) {
+        restartListening(handleVoiceConversation);
+      }
       return;
     }
 
@@ -102,20 +110,18 @@ function App() {
       }
 
       // Speak response and restart listening when done
-      if (data.textResponse) {
+      if (data.textResponse && voiceModeRef.current) {
         console.log('🔊 Speaking response and then restarting listening');
         speak(data.textResponse, () => {
           // Restart listening after speech ends
-          if (isVoiceMode) {
+          if (voiceModeRef.current) {
             console.log('🔄 Restarting listening after speech');
             restartListening(handleVoiceConversation);
           }
         });
-      } else {
+      } else if (voiceModeRef.current) {
         // No response, restart listening directly
-        if (isVoiceMode) {
-          restartListening(handleVoiceConversation);
-        }
+        restartListening(handleVoiceConversation);
       }
       
     } catch (error) {
@@ -134,9 +140,11 @@ function App() {
       setMessages(prev => [...prev, botMessage]);
 
       // Continue voice mode even on error
-      if (isVoiceMode) {
+      if (voiceModeRef.current) {
         setTimeout(() => {
-          restartListening(handleVoiceConversation);
+          if (voiceModeRef.current) {
+            restartListening(handleVoiceConversation);
+          }
         }, 2000);
       }
     } finally {
@@ -177,6 +185,7 @@ function App() {
     setSources([]);
     setShowSources(false);
     setIsVoiceMode(false);
+    voiceModeRef.current = false;
     stopSpeaking();
     stopListening();
     resetTranscript();
@@ -207,7 +216,7 @@ function App() {
     }
     setIsLoading(true);
     stopSpeaking();
-    resetTranscript(); // Clear transcript after sending
+    resetTranscript();
 
     try {
       const data = await sendChatMessage(
@@ -265,12 +274,14 @@ function App() {
       // Stop voice mode
       console.log('⏹️ Stopping voice mode');
       setIsVoiceMode(false);
+      voiceModeRef.current = false;
       stopListening();
       stopSpeaking();
     } else {
       // Start voice mode
       console.log('▶️ Starting voice mode');
       setIsVoiceMode(true);
+      voiceModeRef.current = true;
       resetTranscript();
       startListening(handleVoiceConversation);
     }
@@ -445,6 +456,11 @@ function App() {
                 <p className="text-xs text-green-600 mt-1">
                   Sesli konuşma modu aktif. Konuşun, yanıt alın ve otomatik olarak tekrar dinlemeye başlar.
                 </p>
+                {transcript && isVoiceMode && (
+                  <div className="mt-1 text-xs text-green-800 bg-green-100 p-1 rounded">
+                    "{transcript}"
+                  </div>
+                )}
               </div>
             )}
           </div>
