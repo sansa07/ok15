@@ -25,7 +25,8 @@ function App() {
     isSupported: speechRecognitionSupported,
     startListening,
     stopListening,
-    resetTranscript
+    resetTranscript,
+    restartListening
   } = useSpeechRecognition();
 
   const {
@@ -43,13 +44,14 @@ function App() {
     scrollToBottom();
   }, [messages]);
 
-  // Normal mikrofon kullanımı için transcript'i input'a yaz
+  // Manual microphone: write transcript to input when listening stops
   useEffect(() => {
     if (transcript && !isVoiceMode && !isListening) {
       console.log('📝 Setting input from transcript:', transcript);
       setInput(transcript);
+      resetTranscript(); // Clear transcript after using it
     }
-  }, [transcript, isVoiceMode, isListening]);
+  }, [transcript, isVoiceMode, isListening, resetTranscript]);
 
   // Voice conversation handler
   const handleVoiceConversation = async (spokenText: string) => {
@@ -57,18 +59,14 @@ function App() {
     
     if (!spokenText.trim()) {
       console.log('⚠️ Empty speech, restarting listening');
-      setTimeout(() => {
-        if (isVoiceMode) {
-          startListening(handleVoiceConversation);
-        }
-      }, 500);
+      restartListening(handleVoiceConversation);
       return;
     }
 
     // Reset transcript after using it
     resetTranscript();
 
-    // User message ekle
+    // Add user message
     const userMessage: ChatMessage = {
       id: Date.now().toString(),
       type: 'user',
@@ -96,31 +94,27 @@ function App() {
 
       setMessages(prev => [...prev, botMessage]);
       
-      // Sources güncelle
+      // Update sources
       if (data.sources && data.sources.length > 0) {
         setSources(data.sources);
       } else {
         setSources([]);
       }
 
-      // Yanıtı sesli oku ve bitince tekrar dinlemeye başla
+      // Speak response and restart listening when done
       if (data.textResponse) {
         console.log('🔊 Speaking response and then restarting listening');
         speak(data.textResponse, () => {
-          // Konuşma bittikten sonra tekrar dinlemeye başla
+          // Restart listening after speech ends
           if (isVoiceMode) {
-            setTimeout(() => {
-              console.log('🔄 Restarting listening after speech');
-              startListening(handleVoiceConversation);
-            }, 1000);
+            console.log('🔄 Restarting listening after speech');
+            restartListening(handleVoiceConversation);
           }
         });
       } else {
-        // Yanıt yoksa direkt tekrar dinlemeye başla
+        // No response, restart listening directly
         if (isVoiceMode) {
-          setTimeout(() => {
-            startListening(handleVoiceConversation);
-          }, 1000);
+          restartListening(handleVoiceConversation);
         }
       }
       
@@ -139,10 +133,10 @@ function App() {
       };
       setMessages(prev => [...prev, botMessage]);
 
-      // Hata durumunda da voice mode devam etsin
+      // Continue voice mode even on error
       if (isVoiceMode) {
         setTimeout(() => {
-          startListening(handleVoiceConversation);
+          restartListening(handleVoiceConversation);
         }, 2000);
       }
     } finally {
@@ -268,13 +262,13 @@ function App() {
     console.log('🎛️ Voice toggle clicked, current mode:', isVoiceMode);
     
     if (isVoiceMode) {
-      // Voice mode'u kapat
+      // Stop voice mode
       console.log('⏹️ Stopping voice mode');
       setIsVoiceMode(false);
       stopListening();
       stopSpeaking();
     } else {
-      // Voice mode'u başlat
+      // Start voice mode
       console.log('▶️ Starting voice mode');
       setIsVoiceMode(true);
       resetTranscript();
@@ -296,9 +290,9 @@ function App() {
     if (isListening) {
       stopListening();
     } else {
-      // Normal mikrofon kullanımı (voice mode değil)
+      // Normal microphone usage (not voice mode)
       resetTranscript();
-      startListening();
+      startListening(); // No callback = manual mode
     }
   };
 
@@ -451,11 +445,6 @@ function App() {
                 <p className="text-xs text-green-600 mt-1">
                   Sesli konuşma modu aktif. Konuşun, yanıt alın ve otomatik olarak tekrar dinlemeye başlar.
                 </p>
-                {transcript && (
-                  <div className="mt-1 text-xs text-green-800 bg-green-100 p-1 rounded">
-                    "{transcript}"
-                  </div>
-                )}
               </div>
             )}
           </div>
@@ -570,17 +559,6 @@ function App() {
                   </button>
                 </div>
               )}
-              
-              {/* Voice Recognition Status */}
-              {isListening && !isVoiceMode && (
-                <div className="mb-2 p-2 bg-red-50 rounded-lg flex items-center gap-2">
-                  <div className="w-2 h-2 bg-red-500 rounded-full animate-pulse"></div>
-                  <span className="text-sm text-red-700">Dinleniyor... Konuşmaya başlayın</span>
-                  {transcript && (
-                    <span className="text-sm text-gray-600">"{transcript}"</span>
-                  )}
-                </div>
-              )}
 
               <div className="flex items-center gap-3">
                 <input
@@ -588,8 +566,10 @@ function App() {
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
                   onKeyPress={(e) => e.key === 'Enter' && handleSendMessage()}
-                  placeholder="Mesajınızı yazın veya mikrofon butonuna basın..."
-                  className="flex-1 p-3 sm:p-4 bg-gray-50 border border-gray-200 rounded-xl text-gray-800 placeholder-gray-400 focus:outline-none focus:border-[#003366] focus:ring-1 focus:ring-[#003366] transition-colors"
+                  placeholder={isListening ? "Dinleniyor... Konuşmaya başlayın" : "Mesajınızı yazın veya mikrofon butonuna basın..."}
+                  className={`flex-1 p-3 sm:p-4 bg-gray-50 border border-gray-200 rounded-xl text-gray-800 placeholder-gray-400 focus:outline-none focus:border-[#003366] focus:ring-1 focus:ring-[#003366] transition-colors ${
+                    isListening ? 'border-red-300 bg-red-50' : ''
+                  }`}
                   disabled={isLoading}
                 />
                 <input
